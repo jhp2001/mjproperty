@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 import { useAuth } from '../contexts/AuthContext';
 import { Role } from '../types';
@@ -9,78 +9,101 @@ interface AuthModalProps {
 }
 
 const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
-  const { login, register } = useAuth();
+  const { 
+    setupRecaptcha, 
+    sendOtp, 
+    verifyOtp, 
+    completeRegistration, 
+    error: authError 
+  } = useAuth();
   
-  const [mobile, setMobile] = useState('');
   const [step, setStep] = useState<'mobile' | 'otp' | 'register'>('mobile');
+  const [mobile, setMobile] = useState('');
   const [otp, setOtp] = useState('');
   
   // Registration fields
   const [name, setName] = useState('');
   const [role, setRole] = useState<Role>('buyer');
   
-  const [error, setError] = useState('');
+  const [localError, setLocalError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
+
+  useEffect(() => {
+    if (isOpen) {
+      setupRecaptcha('recaptcha-container');
+    }
+  }, [isOpen, setupRecaptcha]);
 
   if (!isOpen) return null;
 
-  const handleSendOtp = (e: React.FormEvent) => {
+  const handleSendOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
+    setLocalError('');
     if (mobile.length < 10) {
-      setError('Enter a valid 10-digit mobile number');
+      setLocalError('Enter a valid 10-digit mobile number');
       return;
     }
-    // Simulate sending OTP
-    setStep('otp');
+    
+    setIsLoading(true);
+    const success = await sendOtp(mobile);
+    setIsLoading(false);
+    
+    if (success) {
+      setStep('otp');
+    }
   };
 
   const handleVerifyOtp = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
+    setLocalError('');
     setIsLoading(true);
     
-    // Attempt login first
-    const success = await login(mobile, otp);
+    const result = await verifyOtp(otp);
     setIsLoading(false);
     
-    if (success) {
-      onClose();
-    } else {
-      // If login fails, check if OTP is correct ('123456') but user not found
-      if (otp === '123456') {
+    if (result.success) {
+      if (result.isNewUser) {
         setStep('register');
       } else {
-        setError('Invalid OTP. Use 123456 for demo.');
+        onClose();
+        // Reset state for next open
+        setStep('mobile');
+        setMobile('');
+        setOtp('');
       }
     }
   };
 
   const handleRegister = async (e: React.FormEvent) => {
     e.preventDefault();
-    setError('');
+    setLocalError('');
     if (!name.trim()) {
-      setError('Name is required');
+      setLocalError('Name is required');
       return;
     }
     
     setIsLoading(true);
-    const success = await register(name, mobile, role, otp);
+    const success = await completeRegistration(name, role);
     setIsLoading(false);
     
     if (success) {
       onClose();
-    } else {
-      setError('Registration failed.');
+      // Reset state for next open
+      setStep('mobile');
+      setMobile('');
+      setOtp('');
+      setName('');
     }
   };
+
+  const error = localError || authError;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
       <div className="bg-white rounded-2xl shadow-xl w-full max-w-md overflow-hidden relative">
         <button 
           onClick={onClose}
-          className="absolute right-4 top-4 text-slate-400 hover:text-slate-600 transition-colors"
+          className="absolute right-4 top-4 text-slate-400 hover:text-slate-600 transition-colors z-10"
         >
           <X className="h-6 w-6" />
         </button>
@@ -91,8 +114,8 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
           </h2>
           <p className="text-slate-500 mb-6">
             {step === 'mobile' && 'Enter your mobile number to continue'}
-            {step === 'otp' && `Enter the OTP sent to ${mobile}`}
-            {step === 'register' && 'New mobile number detected. How do you want to use our platform?'}
+            {step === 'otp' && `Enter the OTP sent to +91 ${mobile}`}
+            {step === 'register' && 'New mobile number detected. Complete your profile.'}
           </p>
 
           {error && (
@@ -100,6 +123,9 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
               {error}
             </div>
           )}
+
+          {/* Invisible Recaptcha Container */}
+          <div id="recaptcha-container"></div>
 
           {step === 'mobile' && (
             <form onSubmit={handleSendOtp} className="space-y-4">
@@ -111,7 +137,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                   </span>
                   <input
                     type="tel"
-                    className="flex-1 min-w-0 block w-full px-3 py-2 rounded-none rounded-r-lg focus:ring-blue-500 focus:border-blue-500 sm:text-sm border-slate-300"
+                    className="flex-1 min-w-0 block w-full px-3 py-2 rounded-none rounded-r-lg border border-slate-300 focus:ring-blue-500 focus:border-blue-500 sm:text-sm outline-none"
                     placeholder="9876543210"
                     value={mobile}
                     onChange={(e) => setMobile(e.target.value.replace(/\D/g, '').slice(0, 10))}
@@ -121,9 +147,10 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
               </div>
               <button 
                 type="submit"
-                className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                disabled={isLoading}
+                className="w-full flex justify-center py-3 px-4 border border-transparent rounded-lg shadow-sm text-sm font-medium text-white bg-blue-600 hover:bg-blue-700 focus:outline-none disabled:opacity-50"
               >
-                Get OTP
+                {isLoading ? 'Sending OTP...' : 'Get OTP'}
               </button>
             </form>
           )}
@@ -131,7 +158,7 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
           {step === 'otp' && (
             <form onSubmit={handleVerifyOtp} className="space-y-4">
               <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Enter OTP (Use 123456)</label>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Enter OTP</label>
                 <input
                   type="text"
                   className="mt-1 block w-full px-3 py-2 border border-slate-300 rounded-lg shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 sm:text-sm text-center tracking-widest text-lg"
@@ -149,7 +176,11 @@ const AuthModal: React.FC<AuthModalProps> = ({ isOpen, onClose }) => {
                 {isLoading ? 'Verifying...' : 'Verify OTP'}
               </button>
               <div className="text-center">
-                <button type="button" onClick={() => setStep('mobile')} className="text-sm text-blue-600 hover:underline">
+                <button 
+                  type="button" 
+                  onClick={() => setStep('mobile')} 
+                  className="text-sm text-blue-600 hover:underline"
+                >
                   Change Mobile Number
                 </button>
               </div>
